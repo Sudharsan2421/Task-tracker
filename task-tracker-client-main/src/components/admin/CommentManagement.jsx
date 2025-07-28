@@ -19,11 +19,15 @@ const CommentManagement = () => {
   const [isViewAttachmentModalOpen, setIsViewAttachmentModalOpen] = useState(false);
   const { subdomain } = useContext(appContext);
   const chatContainerRef = useRef(null);
-  const lastViewedTime = useRef({}); // Track last viewed time per worker
+  // Initialize lastViewedTime from localStorage
+  const lastViewedTime = useRef(JSON.parse(localStorage.getItem('lastViewedTimes') || '{}'));
 
   // Calculate unread count for a specific worker based on last viewed time
   const calculateUnreadCount = useCallback((workerId, commentsArray) => {
-    const lastViewed = lastViewedTime.current[workerId] || new Date(0);
+    const storedTime = lastViewedTime.current[workerId];
+    // Convert stored ISO string back to Date object, default to epoch if not found
+    const lastViewed = storedTime ? new Date(storedTime) : new Date(0);
+    
     return commentsArray
       .filter(comment => comment.worker?._id === workerId)
       .reduce((total, comment) => {
@@ -130,15 +134,21 @@ const CommentManagement = () => {
   const markWorkerCommentsAsRead = async (workerId) => {
     try {
       const now = new Date();
-      await markCommentsAsRead(workerId, { subdomain });
-      
-      lastViewedTime.current[workerId] = now; // Update last viewed time
-      
+      // This will ideally update the backend 'isNew' status
+      await markCommentsAsRead(workerId, { subdomain }); 
+
+      // Update last viewed time in ref and localStorage
+      const currentLastViewedTimes = JSON.parse(localStorage.getItem('lastViewedTimes') || '{}');
+      currentLastViewedTimes[workerId] = now.toISOString(); // Store as ISO string
+      localStorage.setItem('lastViewedTimes', JSON.stringify(currentLastViewedTimes));
+      lastViewedTime.current = currentLastViewedTimes; // Update the ref with the new object
+
+      // Optimistically update the UI to reflect messages as read
       const updatedComments = comments.map(comment => {
         if (comment.worker?._id === workerId) {
           return {
             ...comment,
-            isNew: false,
+            isNew: false, // Mark as false for immediate UI update
             replies: comment.replies?.map(reply => ({
               ...reply,
               isNew: false
@@ -149,7 +159,8 @@ const CommentManagement = () => {
       });
       
       setComments(updatedComments);
-      updateFilteredWorkers(updatedComments);
+      // Recalculate unread counts based on updated 'isNew' and 'lastViewedTime'
+      updateFilteredWorkers(updatedComments); 
       
       console.log(`All messages for worker ${workerId} marked as read at ${now}.`);
     } catch (error) {
@@ -163,7 +174,9 @@ const CommentManagement = () => {
     const isSelectingSameWorker = workerId === selectedWorker;
     setSelectedWorker(isSelectingSameWorker ? null : workerId);
     
-    if (!isSelectingSameWorker && workerId !== selectedWorker) {
+    // Only mark as read if a new worker is selected or if the currently selected worker is being re-selected
+    // (meaning the user clicked away and clicked back, or just clicked the active one again to ensure read state)
+    if (!isSelectingSameWorker && workerId !== null) { 
       markWorkerCommentsAsRead(workerId);
     }
   };
@@ -317,7 +330,8 @@ const CommentManagement = () => {
                       <div key={message.id}>
                         {message.isWorker ? (
                           <div
-                            className={`p-3 rounded-lg mb-2 max-w-[45%] ${message.isNew ? 'bg-gray-100' : 'bg-gray-50'} ml-auto text-gray-800`}
+                            // Worker messages on the left: removed ml-auto, added mr-auto
+                            className={`p-3 rounded-lg mb-2 max-w-[45%] ${message.isNew ? 'bg-gray-100' : 'bg-gray-50'} mr-auto text-gray-800`}
                           >
                             <div className="flex justify-between items-baseline mb-1">
                               <p className="font-medium text-sm">{getFirstName(comments.find(c => c._id === (message.type === 'reply' ? message.parentId : message.id))?.worker?.name)}</p>
@@ -368,7 +382,8 @@ const CommentManagement = () => {
                           </div>
                         ) : (
                           <div
-                            className={`p-3 rounded-lg mb-2 max-w-[45%] bg-blue-100 text-gray-800`}
+                            // Admin messages on the right: added ml-auto
+                            className={`p-3 rounded-lg mb-2 max-w-[45%] bg-blue-100 text-gray-800 ml-auto`}
                           >
                             <div className="flex justify-between items-baseline mb-1">
                               <p className="font-medium text-sm">Admin</p>
